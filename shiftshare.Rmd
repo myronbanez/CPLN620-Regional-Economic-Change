@@ -1,0 +1,185 @@
+---
+title: "Los Angeles County Regional Economic Cahnge Lab"
+author: "Myron Bañez | CPLN 6200: Techniques of Urban Economic Development"
+output: 
+  html_document:
+    code_folding: hide
+    fig_caption: yes
+    toc: true
+    toc_float: true
+editor_options: 
+  markdown: 
+    wrap: sentence
+  chunk_output_type: console
+---
+
+# Introduction
+
+The regional economic change lab is a continuation of the business structure lab. This analysis will take a closer look at the metrics of economic specialization and the shift-share analysis of the Los Angeles County region. 
+
+```{r eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+library(tidycensus)
+library(sf)
+library(tidyverse)
+library(sf)
+library(lubridate)
+library(tigris)
+library(gganimate)
+library(riem)
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+library(mapview)
+library(tidycensus)
+library(ggcorrplot)
+library(RColorBrewer)
+library(stargazer)
+library(ggplot2)
+theme_set(theme_bw())
+
+if(!require(pacman)){install.packages("pacman"); library(pacman)}
+p_load(tidyverse, here, janitor)
+
+options(scipen=999)
+
+setwd("~/Desktop/Coding/CPLN_620")
+
+
+palette_con <- c("#8ecae6","#219ebc","#023047","#ffb703","#fb8500")
+```
+
+## Data Wrangling
+The following operations wrangles industry data for both Los Angeles County and the United States. Interested in 2011 and 2021, the employment growth, earnings, and location quotient is calculated for both years as well as the change in employment growth and earnings.
+```{r eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+qwi_msa <- read_csv(here::here("~/Desktop/Coding/CPLN_620/Business Structure Lab/losangeles.csv"))
+qwi_msa <- clean_names(qwi_msa, case = "snake")
+
+qwi_annual <- qwi_msa %>%
+  group_by(industry_label_value, year) %>%
+  summarise(avg_emp = mean(emp_total, na.rm = TRUE),
+            avg_earnings = mean(earn_s, na.rm = TRUE))
+
+qwi_tot_wide <- qwi_annual %>%
+  pivot_wider( names_from = year,
+  values_from = c("avg_emp", "avg_earnings"),
+  values_fill = 0)
+
+qwi_tot_wide <- qwi_tot_wide %>%
+  mutate(emp_growth = (avg_emp_2021 - avg_emp_2011)/avg_emp_2011,
+  pay_growth = (avg_earnings_2021 - avg_earnings_2011)/avg_earnings_2011)
+```
+
+```{r eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+qwi_national <- read_csv(here::here("~/Desktop/Coding/CPLN_620/Business Structure Lab/national.csv"))
+qwi_national <- qwi_national %>% clean_names(case = "snake")
+
+qwi_nat_annual <- qwi_national %>%
+  group_by(industry_label_value, geography_label_value, year) %>%
+  summarise(avg_emp = mean(emp_total, na.rm = TRUE),
+            avg_earnings = mean(earn_s, na.rm = TRUE)) %>%
+ungroup() %>%
+group_by(industry_label_value, year) %>%
+summarise(avg_emp = sum(avg_emp, na.rm = TRUE),
+avg_earnings = sum(avg_earnings, na.rm = TRUE))
+
+qwi_nat_annual_wide <- qwi_nat_annual %>%
+  pivot_wider( names_from = year,
+  values_from = c("avg_emp", "avg_earnings"),
+  values_fill = 0)
+
+qwi_annual_wide1 <- qwi_tot_wide %>%
+  inner_join(qwi_nat_annual_wide, by = "industry_label_value",
+  suffix = c("_msa", "_national"))
+
+qwi_annual_wide1 <- qwi_annual_wide1 %>%
+  ungroup() %>%
+  mutate(lq_2011 = (avg_emp_2011_msa/sum(avg_emp_2011_msa, na.rm = TRUE))/(avg_emp_2011_national/sum(avg_emp_2011_national,na.rm=TRUE)),
+         lq_2021 = (avg_emp_2021_msa/sum(avg_emp_2021_msa, na.rm = TRUE))/(avg_emp_2021_national/sum(avg_emp_2021_national,na.rm=TRUE)))
+```
+
+# Economic Specialization
+
+The Coefficient of Specialization and Hirschman-Herfindahl Index are calculated to look at the diversity of the region's industries and the industry concentration respectively. 
+
+### Coefficient of Specialization
+```{r eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+cos_2011 <- .5 * sum(abs(qwi_annual_wide1$avg_emp_2011_msa - 
+qwi_annual_wide1$avg_emp_2011_national), na.rm = TRUE)
+
+cos_2021 <- .5 *  sum(abs(qwi_annual_wide1$avg_emp_2021_msa - 
+qwi_annual_wide1$avg_emp_2021_national), na.rm = TRUE)
+
+cos_2011 
+cos_2021 
+```
+
+### Hirschman-Herfindahl Index
+```{r eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+hhi_2011 <- sum(qwi_annual_wide1$avg_emp_2011_msa^2, na.rm = TRUE)
+hhi_2021 <- sum(qwi_annual_wide1$avg_emp_2021_msa^2, na.rm = TRUE)
+
+hhi_2011 
+hhi_2021
+```
+
+# Shift-Share
+
+We then conduct a shift share analysis by calculating a number of different metrics: national growth, industry mix, regional shift, and overall change. The five most growing and declining industries are then extracted and create a new dataframe.
+```{r eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+qwi_annual_wide1 <- qwi_annual_wide1 %>% 
+  select(1:9) %>%
+  mutate(emp_change1121 = avg_emp_2021_msa - avg_emp_2011_msa)
+
+qwi_annual_wide1 <- qwi_annual_wide1 %>% 
+  mutate(nat_growth = avg_emp_2011_msa * 
+  ((sum(avg_emp_2021_national, na.rm = TRUE)/
+  sum(avg_emp_2011_national, na.rm = TRUE)) - 1))
+
+qwi_annual_wide1 <- qwi_annual_wide1 %>% 
+mutate(ind_mix = avg_emp_2011_msa * 
+((avg_emp_2021_national/avg_emp_2011_national) - 
+(sum(avg_emp_2021_national, na.rm = TRUE)/sum(avg_emp_2011_national, na.rm = TRUE))))
+
+qwi_annual_wide1 <- qwi_annual_wide1 %>% 
+mutate(reg_shift = avg_emp_2011_msa * 
+((avg_emp_2021_msa/avg_emp_2011_msa) -
+(avg_emp_2021_national/avg_emp_2011_national)))
+
+qwi_annual_wide1 <- qwi_annual_wide1 %>% 
+mutate(change = nat_growth + ind_mix + reg_shift)
+
+```
+
+```{r eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+change_top5 <- qwi_annual_wide1[order(qwi_annual_wide1$change,decreasing=T)[1:5],]
+change_btm5 <- qwi_annual_wide1[order(qwi_annual_wide1$change,decreasing=F)[1:5],]
+
+change_top5$year <- 2021
+change_btm5$year <- 2021
+
+change_5 <- rbind(change_top5,change_btm5)
+
+change_5$year <- "2021"
+
+change_5 <- change_5[order(change_5$change,decreasing=T)[1:10],]
+```
+
+```{r eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+palette10 <- c("#582f0e","#7f4f24","#936639","#a68a64","#b6ad90","#c2c5aa","#a4ac86","#656d4a","#414833","#333d29")
+
+ggplot() + 
+    geom_bar(data = change_5, aes(x=year, y=change, fill=industry_label_value),stat = "identity") +
+    scale_fill_manual(values = palette10,
+                    name = "Industry") +
+  labs(title = "Top and Bottom 5 Industries with the most employment growth/decline",
+       subtitle = "Los Angeles County 2011-2021")
+
+
+```
+
+The results of the shift-share analysis reveals that the responsibility of the region's growth is a combination of national trends and place specific quirks. First, looking at the industry with the most employment growth, social assistance, the industry increased employment by 44,645 workers. This is leaps ahead when the second most growing industry, ambulatory health care services had increased employment by 15,884 workers. This suggests that more people in the Los Angeles County region require much more services from child care, rehabilitation, food/housing relief, personal aides, or social workers to name a few.
+
+Second, the sum of the national growth and regional shift reported positive values at 94008.88 and 50387.3 respectively. However, the industry mix reports a negative value of -21995.97. The negative value of Los Angeles County's industry mix indicates that the region is growing slower overall when compared to national averages. 
+
+Overall, Los Angeles County seems to have a positive regional economic change. The national growth and regional shift results are positive which indicate that changes happening at the national level are providing positive spillover effects for the county, but also the region itself contains good local attributes that is supporting the region.   
+
